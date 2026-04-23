@@ -1,4 +1,4 @@
-import { Club, Game, PlayerStats, PlayerSeasonStats } from '../types/index.js';
+import { Club, Game, PlayerStats, PlayerSeasonStats, TeamPlayer } from '../types/index.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -13,6 +13,21 @@ function parseTimestamp(ts: number | string): string {
     // fall through
   }
   return '0000-00-00';
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatPrettyDate(ts: number | string): string {
+  const ms = typeof ts === 'number' ? ts * 1000 : Number(ts) * 1000;
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '';
+  return `${MONTHS[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2, '0')}, ${d.getUTCFullYear()}`;
+}
+
+function teamCode(team: any): string {
+  return String(
+    team?.nameCode ?? team?.shortName ?? team?.name ?? team?.id ?? ''
+  );
 }
 
 function secondsToMinutes(totalSeconds: number): string {
@@ -47,24 +62,75 @@ export function adaptABATeam(raw: any): Club {
 export function adaptABAGame(raw: any): Game {
   return {
     date: parseTimestamp(raw.startTimestamp ?? 0),
-    originalDate: String(raw.startTimestamp ?? ''),
+    originalDate: formatPrettyDate(raw.startTimestamp ?? 0),
     gamecode: String(raw.id ?? ''),
-    homecode: String(raw.homeTeam?.id ?? ''),
-    awaycode: String(raw.awayTeam?.id ?? ''),
+    homecode: teamCode(raw.homeTeam),
+    awaycode: teamCode(raw.awayTeam),
   };
 }
 
-// Not used (per-game player stats not available in BasketAPI for ABA)
-export function adaptABAPlayerStat(_raw: any): PlayerStats {
-  return {};
+// Input: one entry from match lineups (home/away .players[]).
+// Output shape matches Euroleague's raw boxscore row so the FE
+// `normalizePlayer` can process it without branching.
+export function adaptABAPlayerStat(raw: any): PlayerStats {
+  const p = raw.player ?? {};
+  const s = raw.statistics ?? {};
+  const secs = s.secondsPlayed ?? 0;
+  const birthYear = p.dateOfBirthTimestamp
+    ? new Date(p.dateOfBirthTimestamp * 1000).getUTCFullYear().toString()
+    : '';
+
+  return {
+    // FE `normalizePlayer` strips the first char — prefix with "P" so the
+    // numeric id survives.
+    Player_ID: p.id != null ? `P${p.id}` : '',
+    Player: p.name ?? 'Unknown',
+    Position: p.position ?? raw.position ?? '-',
+    Dorsal: raw.jerseyNumber ?? raw.shirtNumber ?? p.jerseyNumber ?? '',
+    Height: p.height ?? 0,
+    BirthYear: birthYear,
+    Minutes: secs > 0 ? secondsToMinutes(secs) : (raw.substitute ? 'DNP' : ''),
+    Points: s.points ?? 0,
+    FieldGoalsMade2: s.twoPointsMade ?? 0,
+    FieldGoalsAttempted2: s.twoPointAttempts ?? 0,
+    FieldGoalsMade3: s.threePointsMade ?? 0,
+    FieldGoalsAttempted3: s.threePointAttempts ?? 0,
+    FreeThrowsMade: s.freeThrowsMade ?? 0,
+    FreeThrowsAttempted: s.freeThrowAttempts ?? 0,
+    OffensiveRebounds: s.offensiveRebounds ?? 0,
+    DefensiveRebounds: s.defensiveRebounds ?? 0,
+    TotalRebounds: s.rebounds ?? 0,
+    Assistances: s.assists ?? 0,
+  };
 }
 
-// Input: merged stats object built from teamTopPlayersRegularSeason categories
+// Input: one entry from teamPlayers response (.players[])
+export function adaptABATeamPlayer(raw: any): TeamPlayer {
+  const p = raw.player ?? raw;
+  const name: string = p.name ?? '';
+  const birthYear = p.dateOfBirthTimestamp
+    ? new Date(p.dateOfBirthTimestamp * 1000).getUTCFullYear().toString()
+    : '';
+  return {
+    id: String(p.id ?? ''),
+    name,
+    slug: p.slug ?? '',
+    position: p.position ?? '',
+    jerseyNumber: String(raw.jerseyNumber ?? raw.shirtNumber ?? p.jerseyNumber ?? ''),
+    height: p.height ?? 0,
+    birthYear,
+    countryCode: p.country?.alpha2 ?? undefined,
+    countryName: p.country?.name ?? undefined,
+  };
+}
+
+// Input: stats from playerStatisticsRegularSeason endpoint
 export interface ABAPlayerSeasonRaw {
   playerId: number;
   playerName: string;
   teamId: number;
   teamName: string;
+  season: string;
   appearances: number;
   secondsPlayed: number;
   points: number;
@@ -75,12 +141,13 @@ export interface ABAPlayerSeasonRaw {
   steals: number;
   turnovers: number;
   blocks: number;
-  fieldGoalsMade: number;
-  fieldGoalsPercentage: number;
+  twoPointsMade: number;
+  twoPointsAttempted: number;
   threePointsMade: number;
-  threePointsPercentage: number;
+  threePointsAttempted: number;
   freeThrowsMade: number;
-  freeThrowsPercentage: number;
+  freeThrowsAttempted: number;
+  personalFouls: number;
 }
 
 export function adaptABAPlayerSeasonStats(raw: ABAPlayerSeasonRaw): PlayerSeasonStats | null {
@@ -88,27 +155,6 @@ export function adaptABAPlayerSeasonStats(raw: ABAPlayerSeasonRaw): PlayerSeason
   if (!appearances) return null;
 
   const avgSeconds = Math.round(raw.secondsPlayed / appearances);
-
-  // Derive attempts from made + percentage
-  const totalFgMade = raw.fieldGoalsMade;
-  const totalFgAttempted = raw.fieldGoalsPercentage > 0
-    ? Math.round(totalFgMade / raw.fieldGoalsPercentage * 100)
-    : 0;
-
-  const total3pMade = raw.threePointsMade;
-  const total3pAttempted = raw.threePointsPercentage > 0
-    ? Math.round(total3pMade / raw.threePointsPercentage * 100)
-    : 0;
-
-  // 2-point field goals derived from total minus 3-pointers
-  const totalFgMade2 = Math.max(0, totalFgMade - total3pMade);
-  const totalFgAttempted2 = Math.max(0, totalFgAttempted - total3pAttempted);
-
-  const totalFtMade = raw.freeThrowsMade;
-  const totalFtAttempted = raw.freeThrowsPercentage > 0
-    ? Math.round(totalFtMade / raw.freeThrowsPercentage * 100)
-    : 0;
-
   const totalPoints = raw.points;
   const totalRebounds = raw.rebounds;
   const totalAssists = raw.assists;
@@ -118,16 +164,17 @@ export function adaptABAPlayerSeasonStats(raw: ABAPlayerSeasonRaw): PlayerSeason
     name: raw.playerName,
     clubCode: String(raw.teamId),
     clubName: raw.teamName,
+    season: raw.season,
     gamesPlayed: appearances,
     timePlayed: secondsToMinutes(avgSeconds),
     points: totalPoints,
     pointsPerGame: parseFloat((totalPoints / appearances).toFixed(1)),
-    fieldGoalsMade2: totalFgMade2,
-    fieldGoalsAttempted2: totalFgAttempted2,
-    fieldGoalsMade3: total3pMade,
-    fieldGoalsAttempted3: total3pAttempted,
-    freeThrowsMade: totalFtMade,
-    freeThrowsAttempted: totalFtAttempted,
+    fieldGoalsMade2: raw.twoPointsMade,
+    fieldGoalsAttempted2: raw.twoPointsAttempted,
+    fieldGoalsMade3: raw.threePointsMade,
+    fieldGoalsAttempted3: raw.threePointsAttempted,
+    freeThrowsMade: raw.freeThrowsMade,
+    freeThrowsAttempted: raw.freeThrowsAttempted,
     offensiveRebounds: raw.offensiveRebounds,
     defensiveRebounds: raw.defensiveRebounds,
     totalRebounds,
@@ -138,12 +185,12 @@ export function adaptABAPlayerSeasonStats(raw: ABAPlayerSeasonRaw): PlayerSeason
     turnovers: raw.turnovers,
     blocksFavour: raw.blocks,
     blocksAgainst: 0,
-    foulsCommited: 0,
+    foulsCommited: raw.personalFouls,
     foulsReceived: 0,
     valuation: 0,
     valuationPerGame: 0,
-    fieldGoals2Percent: formatPercent(totalFgMade2, totalFgAttempted2),
-    fieldGoals3Percent: formatPercent(total3pMade, total3pAttempted),
-    freeThrowsPercent: formatPercent(totalFtMade, totalFtAttempted),
+    fieldGoals2Percent: formatPercent(raw.twoPointsMade, raw.twoPointsAttempted),
+    fieldGoals3Percent: formatPercent(raw.threePointsMade, raw.threePointsAttempted),
+    freeThrowsPercent: formatPercent(raw.freeThrowsMade, raw.freeThrowsAttempted),
   };
 }

@@ -9,7 +9,7 @@ const router = Router();
  */
 router.get('/', async (req: Request, res: Response) => {
   const teamId = Number(req.query.teamId);
-  const season = String(req.query.season ?? '2024-2025');
+  const season = String(req.query.season ?? '2025-2026');
 
   if (!teamId) {
     res.status(400).json({ error: 'teamId is required' });
