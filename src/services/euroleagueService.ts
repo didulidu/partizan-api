@@ -291,5 +291,6 @@ export async function getPlayerSeasonStats(
     fieldGoals2Percent: sanitizeSeasonPercentageString(getText('fieldgoals2percent')),
     fieldGoals3Percent: sanitizeSeasonPercentageString(getText('fieldgoals3percent')),
     freeThrowsPercent: sanitizeSeasonPercentageString(getText('freethrowspercent')),
+    season: '',
   };
 }

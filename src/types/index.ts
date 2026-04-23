@@ -54,6 +54,19 @@ export interface PlayerSeasonStats {
   fieldGoals2Percent?: string;
   fieldGoals3Percent?: string;
   freeThrowsPercent?: string;
+  season: string;
+}
+
+export interface TeamPlayer {
+  id: string;
+  name: string;
+  slug: string;
+  position: string;
+  jerseyNumber: string;
+  height: number;
+  birthYear: string;
+  countryCode?: string;
+  countryName?: string;
 }
 
 export interface TeamStats {
