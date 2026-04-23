@@ -7,6 +7,7 @@ import abaTeamsRouter from './routes/abaTeams.js';
 import abaGamesRouter from './routes/abaGames.js';
 import abaPlayersRouter from './routes/abaPlayers.js';
 import wallpapersRouter from './routes/wallpapers.js';
+import imageProxyRouter from './routes/imageProxy.js';
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -22,6 +23,7 @@ app.use('/api/aba/teams', abaTeamsRouter);
 app.use('/api/aba/games', abaGamesRouter);
 app.use('/api/aba/players', abaPlayersRouter);
 app.use('/api/wallpapers', wallpapersRouter);
+app.use('/api/image-proxy', imageProxyRouter);
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
